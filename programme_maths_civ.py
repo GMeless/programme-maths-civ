@@ -16,6 +16,17 @@ from moteur_rag import MoteurRAG, generer_reponse
 
 CHEMIN_JSON = "resultats_pdf_2023.json"
 
+# Interrupteur pour la mise en ligne publique (Streamlit Community Cloud).
+# Ollama (Qwen 3B, Mistral 7B) n'est PAS disponible sur leurs serveurs, et
+# même Qwen2.5-0.5B via transformers est risqué avec seulement ~1 Go de RAM
+# alloué sur le plan gratuit -- les poids du modèle à eux seuls en
+# consomment déjà la majeure partie. En mode consultation, l'appli reste
+# 100% fiable (aucun appel LLM) : elle affiche directement le contenu exact
+# du programme trouvé, sans reformulation -- ce qui sert justement l'objectif
+# de "maîtrise du contenu" sans aucun risque d'hallucination.
+# Remets à True si tu déploies un jour sur un hébergement avec plus de RAM.
+AUTORISER_GENERATION_LLM = False
+
 st.set_page_config(page_title="Assistant Maths CIV", page_icon="📐", layout="centered")
 
 
@@ -58,25 +69,34 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.subheader("Modèle de génération")
-    moteur_generation = st.radio(
-        "Moteur",
-        options=["local", "ollama_qwen3b", "ollama_mistral"],
-        format_func=lambda x: {
-            "local": "Qwen2.5-0.5B (local, très rapide, faible)",
-            "ollama_qwen3b": "Qwen2.5-3B (Ollama, bon compromis)",
-            "ollama_mistral": "Mistral 7B (Ollama, plus lent)",
-        }[x],
-        index=1,  # Qwen 3B par défaut : meilleur compromis identifié jusqu'ici
-        help=(
-            "Ollama doit tourner en arrière-plan (icône barre système) pour les "
-            "options Qwen 3B et Mistral 7B."
-        ),
-    )
-    _NOMS_OLLAMA = {
-        "ollama_qwen3b": "qwen2.5:3b-instruct-q4_K_M",
-        "ollama_mistral": "mistral:7b-instruct-q4_K_M",
-    }
+    if AUTORISER_GENERATION_LLM:
+        st.subheader("Modèle de génération")
+        moteur_generation = st.radio(
+            "Moteur",
+            options=["local", "ollama_qwen3b", "ollama_mistral"],
+            format_func=lambda x: {
+                "local": "Qwen2.5-0.5B (local, très rapide, faible)",
+                "ollama_qwen3b": "Qwen2.5-3B (Ollama, bon compromis)",
+                "ollama_mistral": "Mistral 7B (Ollama, plus lent)",
+            }[x],
+            index=1,  # Qwen 3B par défaut : meilleur compromis identifié jusqu'ici
+            help=(
+                "Ollama doit tourner en arrière-plan (icône barre système) pour les "
+                "options Qwen 3B et Mistral 7B."
+            ),
+        )
+        _NOMS_OLLAMA = {
+            "ollama_qwen3b": "qwen2.5:3b-instruct-q4_K_M",
+            "ollama_mistral": "mistral:7b-instruct-q4_K_M",
+        }
+    else:
+        moteur_generation = None
+        st.subheader("Mode")
+        st.info(
+            "📖 **Mode consultation** : les réponses affichent directement le "
+            "contenu exact du programme officiel trouvé, sans reformulation "
+            "par un modèle de génération."
+        )
 
 st.title("📐 Assistant Maths CIV")
 
@@ -162,6 +182,19 @@ if question:
                 "Essaie de reformuler, ou vérifie que le niveau sélectionné est le bon."
             )
             st.markdown(reponse)
+        elif not AUTORISER_GENERATION_LLM:
+            # Mode consultation : on affiche directement le contenu trouvé,
+            # organisé par leçon, sans jamais appeler de modèle.
+            lignes = []
+            derniere_lecon = None
+            for r in resultats:
+                if r["lecon_titre"] != derniere_lecon:
+                    niv = NIVEAU_LABELS.get(r["niveau"], r["niveau"])
+                    lignes.append(f"\n**[{niv}] {r['lecon_titre']}**")
+                    derniere_lecon = r["lecon_titre"]
+                lignes.append(f"- {r['texte']}")
+            reponse = "\n".join(lignes)
+            st.markdown(reponse)
         else:
             with st.spinner("Génération de la réponse (peut prendre un moment)..."):
                 try:
@@ -189,7 +222,14 @@ if question:
                     st.markdown(f"**[{niv}] {r['lecon_titre']}** — {r['texte']}")
 
     st.session_state.messages.append(
-        {"role": "assistant", "content": reponse, "sources": resultats}
+        {
+            "role": "assistant",
+            "content": reponse,
+            # En mode consultation, les sources sont déjà affichées en clair
+            # dans le texte de la réponse -- pas besoin de les redupliquer
+            # dans un expander séparé lors du réaffichage de l'historique.
+            "sources": resultats if AUTORISER_GENERATION_LLM else None,
+        }
     )
     # Historique "léger" transmis au modèle : uniquement question/réponse,
     # sans les sources (le modèle n'en a pas besoin, ça alourdirait le prompt
