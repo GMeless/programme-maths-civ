@@ -152,6 +152,10 @@ if question:
             question, st.session_state.niveau
         )
         if reponse_structurelle is None:
+            reponse_structurelle = moteur.repondre_position_lecon(
+                question, st.session_state.niveau
+            )
+        if reponse_structurelle is None:
             reponse_structurelle = moteur.repondre_lecon_complete(
                 question, st.session_state.niveau
             )

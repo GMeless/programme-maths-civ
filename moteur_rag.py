@@ -190,6 +190,19 @@ class MoteurRAG:
         re.compile(r"habilet[ée]s? (attendues?|de la le[çc]on)", re.IGNORECASE),
     ]
 
+    PATRONS_POSITION = [
+        (re.compile(r"premi[eè]re?\s+le[çc]on", re.IGNORECASE), 0),
+        (re.compile(r"derni[eè]re?\s+le[çc]on", re.IGNORECASE), -1),
+    ]
+
+    ORDINAUX_MOTS = {
+        "deuxieme": 2, "deuxième": 2, "troisieme": 3, "troisième": 3,
+        "quatrieme": 4, "quatrième": 4, "cinquieme": 5, "cinquième": 5,
+        "sixieme": 6, "sixième": 6, "septieme": 7, "septième": 7,
+        "huitieme": 8, "huitième": 8, "neuvieme": 9, "neuvième": 9,
+        "dixieme": 10, "dixième": 10,
+    }
+
     def __init__(self, chemin_json: str):
         with open(chemin_json, encoding="utf-8") as f:
             self.lecons = json.load(f)
@@ -239,6 +252,72 @@ class MoteurRAG:
         lignes = [f"En {niv_label}, le programme officiel compte **{len(lecons_niveau)} leçons** :", ""]
         for i, l in enumerate(lecons_niveau, 1):
             lignes.append(f"{i}. {l['lecon_titre']}")
+        return "\n".join(lignes)
+
+    def repondre_position_lecon(self, question: str, niveau_defaut: str):
+        """
+        Répond aux questions sur une leçon repérée par sa position dans la
+        liste ("la première leçon en 3e", "la 2e leçon de TleC", "la
+        dernière leçon en 6e").
+
+        IMPORTANT : l'ordre utilisé ici est celui du "corps du programme"
+        tel que structuré dans les PDF (Compétence -> Thème -> Leçon) --
+        PAS forcément l'ordre chronologique réel d'enseignement dans
+        l'année scolaire, qui est défini par un document de "progression"
+        séparé qu'on n'a pas encore extrait. La réponse le précise
+        explicitement pour ne jamais laisser croire à une certitude qu'on
+        n'a pas.
+        """
+        q_norm = normaliser(question)
+        if not re.search(r"le[çc]on", q_norm):
+            return None
+
+        position = None
+        for pat, pos in self.PATRONS_POSITION:
+            if pat.search(question):
+                position = pos
+                break
+        if position is None:
+            m = re.search(r"(\d+)\s*[eè]?[eè]?me?\s+le[çc]on", q_norm)
+            if m:
+                position = int(m.group(1)) - 1
+            else:
+                for mot, n in self.ORDINAUX_MOTS.items():
+                    if mot in q_norm:
+                        position = n - 1
+                        break
+        if position is None:
+            return None
+
+        niveau = self.detecter_niveau_mentionne(question) or niveau_defaut
+        lecons_niveau = [l for l in self.lecons if l.get("niveau") == niveau]
+        niv_label = NIVEAU_LABELS.get(niveau, niveau)
+
+        if not lecons_niveau:
+            return f"Aucune leçon trouvée pour le niveau {niv_label} dans le corpus."
+        try:
+            lecon = lecons_niveau[position]
+        except IndexError:
+            return (
+                f"Le niveau {niv_label} ne compte que {len(lecons_niveau)} leçon(s) "
+                "dans le corpus -- la position demandée est hors limite."
+            )
+
+        idx_reel = lecons_niveau.index(lecon) + 1
+        lignes = [
+            f"D'après l'ordre du programme officiel (Compétence → Thème → Leçon), "
+            f"la leçon n°{idx_reel} en {niv_label} est : **{lecon['lecon_titre']}**",
+            "",
+            "⚠️ *Cet ordre suit la structure du document, pas forcément l'ordre "
+            "chronologique réel d'enseignement dans l'année (celui-ci est fixé "
+            "par un document de progression séparé).*",
+            "",
+        ]
+        for h in lecon.get("habiletes", []):
+            lignes.append(f"**{h['habilete']}**")
+            for c in h.get("contenus", []):
+                lignes.append(f"- {c}")
+            lignes.append("")
         return "\n".join(lignes)
 
     def _extraire_titres_mentionnes(self, question: str, niveaux_possibles=None):
