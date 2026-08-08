@@ -186,6 +186,21 @@ if question:
                 "Essaie de reformuler, ou vérifie que le niveau sélectionné est le bon."
             )
             st.markdown(reponse)
+        elif AUTORISER_GENERATION_LLM and not moteur.confiance_suffisante(resultats):
+            # Aucune vraie correspondance de contenu (uniquement des
+            # résultats "de secours" via le bonus de verbe) : on ne fait
+            # PAS appel au modèle. Un petit modèle local peut forcer une
+            # réponse même avec une consigne explicite de refuser -- la
+            # seule protection fiable est de ne jamais l'appeler dans ce
+            # cas, plutôt que d'espérer qu'il respecte la consigne.
+            reponse = (
+                "Je n'ai trouvé aucune leçon du programme officiel de "
+                f"{NIVEAU_LABELS[st.session_state.niveau]} qui corresponde "
+                "clairement à cette question. Cette notion n'est peut-être "
+                "pas au programme de ce niveau -- essaie de changer de "
+                "niveau, ou reformule ta question."
+            )
+            st.markdown(reponse)
         elif not AUTORISER_GENERATION_LLM:
             # Mode consultation : on affiche directement le contenu trouvé,
             # organisé par leçon, sans jamais appeler de modèle.

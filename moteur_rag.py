@@ -123,6 +123,12 @@ def construire_documents(lecons: list) -> list:
                 "theme": lecon.get("theme"),
                 "lecon_titre": titre,
                 "habilete": h.get("habilete"),
+                # Nombre de mots du contenu réel (hors verbe, hors titre) --
+                # sert de garde-fou pour le bonus de verbe : un contenu trop
+                # court/générique ("un exercice") ne doit jamais suffire à
+                # faire remonter un document sur le seul bonus, même s'il
+                # partage le verbe avec la question.
+                "richesse": len(contenus.split()),
             })
     return documents
 
@@ -446,7 +452,7 @@ class MoteurRAG:
         if len(lecons_nommees) == 1:
             lecon = lecons_nommees[0]
             return [
-                {**self._doc_pour_habilete(lecon, h), "score": 1.0}
+                {**self._doc_pour_habilete(lecon, h), "score": 1.0, "score_contenu": 1.0}
                 for h in lecon.get("habiletes", [])
             ]
 
@@ -469,24 +475,52 @@ class MoteurRAG:
         sous_matrice = self.matrice_globale[indices_filtres]
         scores_contenu = cosine_similarity(vecteur_question, sous_matrice)[0]
 
+        SEUIL_RICHESSE_MIN = 3  # mots minimum dans le contenu pour être éligible au seul bonus de verbe
+
         scores_combines = []
         for pos, idx in enumerate(indices_filtres):
-            score = float(scores_contenu[pos])
+            score_contenu = float(scores_contenu[pos])
+            doc = self.documents[idx]
+
+            bonus = 0.0
+            verbe_correspond = False
             if stems_verbes_detectes:
-                stem_habilete = _stem_verbe(self.documents[idx]["habilete"])
+                stem_habilete = _stem_verbe(doc["habilete"])
                 if stem_habilete in stems_verbes_detectes:
-                    score += BONUS_VERBE
-            scores_combines.append((idx, score))
+                    verbe_correspond = True
+                    bonus = BONUS_VERBE
+
+            contenu_substantiel = doc.get("richesse", 0) >= SEUIL_RICHESSE_MIN
+            if score_contenu <= 0 and not (verbe_correspond and contenu_substantiel):
+                # Ni contenu pertinent, ni verbe partagé sur un contenu
+                # substantiel : on exclut (évite le cas "Résoudre : un
+                # exercice" qui ne devrait jamais remonter tout seul).
+                continue
+
+            scores_combines.append((idx, score_contenu + bonus, score_contenu))
 
         classement = sorted(scores_combines, key=lambda x: x[1], reverse=True)[:k]
 
         resultats = []
-        for idx, score in classement:
+        for idx, score, score_contenu in classement:
             if score <= 0:
                 continue
             d = self.documents[idx]
-            resultats.append({**d, "score": round(score, 3)})
+            resultats.append({**d, "score": round(score, 3), "score_contenu": round(score_contenu, 3)})
         return resultats
+
+    def confiance_suffisante(self, resultats: list) -> bool:
+        """
+        True si au moins un résultat repose sur une vraie correspondance de
+        contenu (pas seulement le bonus de verbe). Si tous les résultats
+        n'ont qu'un score de contenu nul (uniquement rescapés par le bonus
+        de verbe), on ne peut pas garantir que le sujet de la question soit
+        réellement traité dans ce contexte -- mieux vaut le dire clairement
+        que de laisser un modèle de génération tenter une réponse hasardeuse
+        (ce qu'on a observé : même avec une consigne explicite de refuser,
+        un petit modèle local peut quand même forcer une réponse).
+        """
+        return any(r.get("score_contenu", 0) > 0 for r in resultats)
 
     def contexte_pour_prompt(self, resultats: list) -> str:
         lignes = []
@@ -535,8 +569,15 @@ def construire_messages(question: str, contexte: str, historique: list = None) -
     system = (
         "Tu es un assistant pédagogique pour des professeurs de mathématiques "
         "en Côte d'Ivoire. Réponds UNIQUEMENT à partir du contexte du programme "
-        "officiel fourni à chaque question. Si le contexte ne permet pas de "
-        "répondre précisément, dis-le clairement plutôt que d'inventer."
+        "officiel fourni à chaque question. "
+        "Si le contexte ne permet pas de répondre précisément à la question posée, "
+        "tu DOIS refuser de répondre sur le fond et dire clairement que cette "
+        "notion n'apparaît pas dans le contexte fourni pour ce niveau -- "
+        "N'UTILISE JAMAIS tes connaissances générales pour compléter ou "
+        "deviner une réponse en dehors de ce contexte, même si tu penses "
+        "connaître la solution : mieux vaut dire explicitement que tu ne sais "
+        "pas plutôt que de risquer une réponse non garantie par le programme "
+        "officiel."
     )
     messages = [{"role": "system", "content": system}]
     if historique:
