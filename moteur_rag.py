@@ -87,9 +87,21 @@ STEMS_HABILETE = {_stem_verbe(v) for v in VERBES_HABILETE}
 
 
 def normaliser(texte: str) -> str:
-    """Nettoyage léger avant vectorisation (accents conservés -- le TF-IDF
-    français gère très bien les accents tels quels, pas besoin de les retirer)."""
-    return re.sub(r"\s+", " ", texte).strip().lower()
+    """
+    Nettoyage avant vectorisation : accents retirés, tout en minuscule,
+    espaces normalisés.
+
+    IMPORTANT : les accents sont retirés (pas seulement conservés comme dans
+    une version précédente) -- sans ça, "equation" (tapé sans accent, ce
+    que font beaucoup d'utilisateurs en écrivant vite) et "équation" (tel
+    qu'il apparaît toujours dans le texte officiel du programme) sont traités
+    comme deux mots totalement différents par le TF-IDF, ce qui fait
+    échouer silencieusement la recherche dès qu'un accent manque dans la
+    question -- même sur un sujet par ailleurs clairement dans le programme.
+    """
+    t = unicodedata.normalize("NFKD", texte)
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", t).strip().lower()
 
 
 def construire_documents(lecons: list) -> list:
