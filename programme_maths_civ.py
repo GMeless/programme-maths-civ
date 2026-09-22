@@ -16,16 +16,24 @@ from moteur_rag import MoteurRAG, generer_reponse
 
 CHEMIN_JSON = "resultats_pdf_2023.json"
 
-# Interrupteur pour la mise en ligne publique (Streamlit Community Cloud).
-# Ollama (Qwen 3B, Mistral 7B) n'est PAS disponible sur leurs serveurs, et
-# même Qwen2.5-0.5B via transformers est risqué avec seulement ~1 Go de RAM
-# alloué sur le plan gratuit -- les poids du modèle à eux seuls en
-# consomment déjà la majeure partie. En mode consultation, l'appli reste
-# 100% fiable (aucun appel LLM) : elle affiche directement le contenu exact
-# du programme trouvé, sans reformulation -- ce qui sert justement l'objectif
-# de "maîtrise du contenu" sans aucun risque d'hallucination.
-# Remets à True si tu déploies un jour sur un hébergement avec plus de RAM.
-AUTORISER_GENERATION_LLM = False
+# Interrupteur pour la génération par modèle (Qwen/Mistral). Ollama n'est pas
+# disponible sur Streamlit Community Cloud, et même Qwen2.5-0.5B via
+# transformers est risqué avec ~1 Go de RAM. Pour éviter d'avoir à changer
+# le code à la main entre tests locaux et déploiement public (source
+# d'erreurs, comme le bug Ollama qu'on a eu en poussant la mauvaise
+# version), ce réglage se lit automatiquement :
+#   - En LOCAL : rien à faire, la génération est activée par défaut.
+#   - Sur STREAMLIT CLOUD : va dans les paramètres de l'appli déployée
+#     (Manage app -> ⋮ -> Settings -> Secrets) et colle :
+#         AUTORISER_GENERATION_LLM = "false"
+#     Ça bascule automatiquement l'appli déployée en mode consultation,
+#     sans toucher au code ni risquer de pousser la mauvaise version.
+try:
+    AUTORISER_GENERATION_LLM = (
+        st.secrets.get("AUTORISER_GENERATION_LLM", "true").lower() == "true"
+    )
+except Exception:
+    AUTORISER_GENERATION_LLM = True
 
 st.set_page_config(page_title="Assistant Maths CIV", page_icon="📐", layout="centered")
 
